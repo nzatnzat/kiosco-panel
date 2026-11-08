@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#16202c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Panel del Kiosco</title>
+<style>
+:root{--bg:#eef1f5;--ink:#16202c;--muted:#667085;--line:#dde2e9;--pri:#1f4fd1;--go:#0e8a5f;--err:#c0262d;--warn:#b45309}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;padding-bottom:30px}
+header{background:var(--ink);color:#fff;padding:14px 16px calc(14px) 16px;position:sticky;top:0;z-index:5}
+header h1{margin:0;font-size:18px}header .sub{font-size:12px;opacity:.75;margin-top:2px}
+.wrap{padding:12px;max-width:700px;margin:0 auto}
+.tabs{display:flex;gap:6px;overflow:auto;margin:4px 0 12px}
+.tab{border:1px solid var(--line);background:#fff;padding:8px 14px;border-radius:20px;font-weight:700;font-size:14px;white-space:nowrap}
+.tab.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.st{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px}
+.st .l{font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.02em}
+.st .v{font-size:22px;font-weight:800;margin-top:2px}.st .s{font-size:12px;color:var(--muted)}
+.st.big{grid-column:1/3}.st.big .v{font-size:32px}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;margin-bottom:12px;overflow:hidden}
+.card h2{font-size:15px;margin:0;padding:12px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #f0f2f5}
+.row:last-child{border-bottom:0}.row .m{color:var(--muted);font-size:13px}
+.bar{height:6px;background:#eef1f5;border-radius:4px;margin-top:5px;overflow:hidden}.bar i{display:block;height:100%;background:var(--pri)}
+.ok{color:var(--go)}.err{color:var(--err)}.warn{color:var(--warn)}.muted{color:var(--muted)}
+.tag{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;font-weight:700;white-space:nowrap}
+.tag.g{background:#e3f6ee;color:#0a6e4b}.tag.r{background:#fde8e9;color:var(--err)}.tag.a{background:#fff1dc;color:var(--warn)}
+.live{display:flex;gap:10px;align-items:center;padding:12px 14px}.dot{width:10px;height:10px;border-radius:50%;background:var(--go);box-shadow:0 0 0 4px #0e8a5f33}
+form{background:#fff;border-radius:16px;padding:18px;border:1px solid var(--line)}
+label{display:block;font-weight:700;font-size:13px;margin-bottom:12px}
+input{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;font:inherit;margin-top:4px}
+button.pri{width:100%;padding:14px;border:0;border-radius:12px;background:var(--pri);color:#fff;font:inherit;font-weight:800;font-size:16px}
+.btn{border:1px solid var(--line);background:#fff;padding:6px 12px;border-radius:9px;font:inherit;font-weight:700;font-size:13px}
+.hours{display:flex;align-items:flex-end;gap:2px;height:90px;padding:12px 14px 22px}
+.hours div{flex:1;background:var(--pri);border-radius:2px 2px 0 0;min-height:2px;position:relative}
+.hours div span{position:absolute;bottom:-17px;left:50%;transform:translateX(-50%);font-size:9px;color:var(--muted)}
+.center{text-align:center;padding:30px;color:var(--muted)}
+</style>
+</head>
+<body>
+<header><h1 id="tt">Panel del Kiosco</h1><div class="sub" id="sub">&nbsp;</div></header>
+<div class="wrap" id="app"></div>
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const r2 = n => Math.round((+n || 0) * 100) / 100;
+const money = n => '$ ' + r2(n).toLocaleString('es-AR', {maximumFractionDigits: 0});
+const fmtDT = ts => new Date(ts).toLocaleString('es-AR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
+const fmtT = ts => new Date(ts).toLocaleTimeString('es-AR', {hour: '2-digit', minute: '2-digit'});
+const MEDIOS = {efectivo: 'Efectivo', mp: 'Mercado Pago', debito: 'Débito', credito: 'Crédito', transferencia: 'Transferencia', fiado: 'Fiado'};
+const LS = {get(k){ try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }, set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }};
+let SES = LS.get('panel_ses'), period = 'hoy', cache = {}, timer = null, refreshing = null;
+
+// ---------- conexión ----------
+async function login(url, key, email, pass){
+  url = url.trim().replace(/\/+$/, '');
+  const r = await fetch(url + '/auth/v1/token?grant_type=password', {method: 'POST', headers: {apikey: key.trim(), 'Content-Type': 'application/json'}, body: JSON.stringify({email: email.trim(), password: pass})});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(/invalid/i.test(d.error_description || d.msg || d.error_code || '') ? 'Email o contraseña incorrectos' : (d.error_description || d.msg || 'No se pudo entrar'));
+  return {url, key: key.trim(), at: d.access_token, rt: d.refresh_token, exp: Date.now() + (d.expires_in || 3600) * 1000};
+}
+async function token(){
+  if (SES.exp - 60000 > Date.now()) return;
+  if (!refreshing) refreshing = (async () => {
+    const r = await fetch(SES.url + '/auth/v1/token?grant_type=refresh_token', {method: 'POST', headers: {apikey: SES.key, 'Content-Type': 'application/json'}, body: JSON.stringify({refresh_token: SES.rt})});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { SES = null; LS.set('panel_ses', null); throw new Error('La sesión venció, volvé a entrar'); }
+    Object.assign(SES, {at: d.access_token, rt: d.refresh_token, exp: Date.now() + (d.expires_in || 3600) * 1000}); LS.set('panel_ses', SES);
+  })().finally(() => { refreshing = null; });
+  return refreshing;
+}
+async function q(params){
+  await token(); const out = [];
+  for (let off = 0; ; off += 1000) {
+    const r = await fetch(`${SES.url}/rest/v1/registros?${params}&limit=1000&offset=${off}`, {headers: {apikey: SES.key, Authorization: 'Bearer ' + SES.at}});
+    if (!r.ok) throw new Error('Error al leer datos (' + r.status + ')');
+    const d = await r.json(); out.push(...d); if (d.length < 1000) break;
+  }
+  return out;
+}
+const byStore = (store, extra='') => q(`select=data&store=eq.${store}${extra}`).then(r => r.map(x => x.data));
+const inRange = (store, a, b) => byStore(store, `&ts=gte.${a}&ts=lte.${b}&order=ts.asc`);
+
+// ---------- pantallas ----------
+function viewLogin(msg=''){
+  const h = new URLSearchParams(location.hash.slice(1));
+  $('#tt').textContent = 'Panel del Kiosco'; $('#sub').textContent = 'Entrá con la cuenta de la nube';
+  $('#app').innerHTML = `<form id="lf"><label>URL del proyecto<input name="url" required value="${esc(h.get('u') || '')}" placeholder="https://xxxx.supabase.co"></label><label>Clave pública<input name="key" required value="${esc(h.get('k') || '')}"></label>
+    <label>Email<input name="email" type="email" required autocomplete="username"></label><label>Contraseña<input name="pass" type="password" required autocomplete="current-password"></label>
+    <p class="err" id="lm">${esc(msg)}</p><button class="pri">Entrar</button><p class="muted" style="font-size:13px">Los datos de URL y clave están en el sistema de la caja: Configuración → Nube.</p></form>`;
+  $('#lf').onsubmit = async e => {
+    e.preventDefault(); const f = e.target; $('#lm').textContent = 'Entrando…';
+    try { SES = await login(f.url.value, f.key.value, f.email.value, f.pass.value); LS.set('panel_ses', SES); history.replaceState(null, '', location.pathname); start(); }
+    catch (err) { $('#lm').textContent = err.message; }
+  };
+}
+function range(){
+  const d = new Date(), t0 = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  return {hoy: [t0, t0 + 864e5 - 1], ayer: [t0 - 864e5, t0 - 1], sem: [t0 - 6 * 864e5, t0 + 864e5 - 1], mes: [new Date(d.getFullYear(), d.getMonth(), 1).getTime(), t0 + 864e5 - 1]}[period];
+}
+async function load(){
+  const [a, b] = range(), now = Date.now();
+  const needSlow = !cache.slowT || now - cache.slowT > 10 * 60000;
+  const [sales, shifts, movs, last, slow] = await Promise.all([
+    inRange('sales', a, b), inRange('shifts', Math.min(a, now - 3 * 864e5) - 2 * 864e5, now + 864e5), inRange('movements', a, b),
+    (async () => { await token(); const r = await fetch(`${SES.url}/rest/v1/registros?select=updated_at&order=updated_at.desc&limit=1`, {headers: {apikey: SES.key, Authorization: 'Bearer ' + SES.at}}); const d = await r.json(); return d[0] ? new Date(d[0].updated_at).getTime() : 0; })(),
+    needSlow ? Promise.all(['users', 'products', 'clients', 'meta'].map(s => byStore(s))) : null,
+  ]);
+  if (slow) { [cache.users, cache.products, cache.clients, cache.meta] = slow; cache.slowT = now; }
+  let openSales = [];
+  const open = shifts.find(s => s.estado === 'abierta');
+  if (open) openSales = (await inRange('sales', open.apertura - 1, now + 864e5)).filter(s => s.shiftId === open.id);
+  return {sales, shifts, movs, last, open, openSales};
+}
+const uname = id => ((cache.users || []).find(u => u.id === id) || {}).nombre || '—';
+function bars(obj, lab){
+  const E = Object.entries(obj).filter(e => e[1]).sort((x, y) => y[1] - x[1]), mx = Math.max(1, ...E.map(e => e[1]));
+  return E.length ? E.map(([k, v]) => `<div class="row" style="display:block"><div style="display:flex;justify-content:space-between"><span>${esc(lab(k))}</span><b>${money(v)}</b></div><div class="bar"><i style="width:${v / mx * 100}%"></i></div></div>`).join('') : '<div class="row muted">Sin datos</div>';
+}
+function draw(D){
+  const cfg = (cache.meta || []).find(m => m.k === 'config') || {};
+  $('#tt').textContent = cfg.negocio || 'Panel del Kiosco';
+  const ago = D.last ? Math.round((Date.now() - D.last) / 60000) : null;
+  $('#sub').innerHTML = `Actualizado ${fmtT(Date.now())} · último dato de la caja ${ago === null ? '—' : ago < 1 ? 'hace instantes' : ago < 60 ? `hace ${ago} min` : fmtDT(D.last)}`;
+  const v = D.sales.filter(s => !s.anulada);
+  let total = 0, gan = 0, sinCosto = 0, fact = 0; const por = {}, emp = {}, prod = {}, hora = Array(24).fill(0);
+  for (const s of v) {
+    total += s.total; por[s.medio] = (por[s.medio] || 0) + s.total; emp[s.userId] = (emp[s.userId] || 0) + s.total; hora[new Date(s.ts).getHours()] += s.total;
+    if (s.factura && s.factura.estado === 'ok') fact += s.total;
+    for (const it of s.items) { const sub = it.precio * it.cant; if (it.costo > 0) gan += sub - it.costo * it.cant; else sinCosto += sub; const k = it.pid || it.nombre; (prod[k] ||= {n: it.nombre, c: 0, t: 0}); prod[k].c += it.cant; prod[k].t += sub; }
+  }
+  const gastos = D.movs.filter(m => m.tipo === 'gasto').reduce((a, m) => a + m.monto, 0);
+  const cerrados = D.shifts.filter(s => s.estado === 'cerrada').sort((a, b) => b.cierre - a.cierre).slice(0, 8);
+  const low = (cache.products || []).filter(p => p.activo !== false && p.controlaStock && p.stock <= (p.stockMin || 0));
+  const deuda = (cache.clients || []).reduce((a, c) => a + Math.max(0, c.saldo || 0), 0);
+  const factProb = D.sales.filter(s => s.factura && ['pendiente', 'error'].includes(s.factura.estado)).length;
+  const hmx = Math.max(1, ...hora), top = Object.values(prod).sort((a, b) => b.t - a.t).slice(0, 10);
+  const P = {hoy: 'Hoy', ayer: 'Ayer', sem: '7 días', mes: 'Este mes'};
+  const os = D.openSales.filter(s => !s.anulada), osTot = os.reduce((a, s) => a + s.total, 0);
+  $('#app').innerHTML = `
+  <div class="card">${D.open ? `<div class="live"><span class="dot"></span><div><b>Caja abierta</b> por ${esc(uname(D.open.userId))} desde ${fmtDT(D.open.apertura)}<div class="muted" style="font-size:13px">En este turno: <b class="ok">${money(osTot)}</b> en ${os.length} ventas · última venta ${os.length ? fmtT(os[os.length - 1].ts) : '—'}</div></div></div>` : '<div class="live"><span class="dot" style="background:#999;box-shadow:none"></span><b>La caja está cerrada</b></div>'}</div>
+  <div class="tabs">${Object.entries(P).map(([k, l]) => `<button class="tab ${period === k ? 'on' : ''}" onclick="setP('${k}')">${l}</button>`).join('')}<button class="tab" onclick="refresh(true)">↻</button></div>
+  <div class="grid">
+    <div class="st big"><div class="l">Vendido</div><div class="v">${money(total)}</div><div class="s">${v.length} ventas · ticket promedio ${money(v.length ? total / v.length : 0)}${D.sales.length - v.length ? ` · ${D.sales.length - v.length} anuladas` : ''}</div></div>
+    <div class="st"><div class="l">Ganancia bruta</div><div class="v ok">${money(gan)}</div><div class="s">${sinCosto ? money(sinCosto) + ' sin costo cargado' : 'sobre el costo'}</div></div>
+    <div class="st"><div class="l">Gastos de caja</div><div class="v">${money(gastos)}</div><div class="s">Queda ${money(gan - gastos)}</div></div>
+    ${fact ? `<div class="st"><div class="l">Facturado</div><div class="v">${money(fact)}</div></div>` : ''}
+    <div class="st"><div class="l">Fiado (te deben)</div><div class="v ${deuda ? 'err' : ''}">${money(deuda)}</div></div>
+  </div>
+  ${factProb ? `<div class="card"><div class="row"><span>⚠️ Facturas pendientes o con error</span><span class="tag a">${factProb}</span></div></div>` : ''}
+  <div class="card"><h2>Por medio de pago</h2>${bars(por, k => MEDIOS[k] || k)}</div>
+  <div class="card"><h2>Por empleado</h2>${bars(emp, uname)}</div>
+  <div class="card"><h2>Ventas por hora</h2><div class="hours">${hora.map((x, h) => `<div style="height:${x / hmx * 100}%"><span>${h % 3 === 0 ? h : ''}</span></div>`).join('')}</div></div>
+  <div class="card"><h2>Cierres de caja</h2>${cerrados.length ? cerrados.map(s => `<div class="row"><div><b>${esc(uname(s.userId))}</b><div class="m">${fmtDT(s.apertura)} → ${fmtT(s.cierre)} · vendió ${money(s.resumen ? s.resumen.total : 0)}</div>${s.notas ? `<div class="m">📝 ${esc(s.notas)}</div>` : ''}</div><span class="tag ${Math.abs(s.diferencia) < 1 ? 'g' : 'r'}">${Math.abs(s.diferencia) < 1 ? 'OK' : (s.diferencia > 0 ? '+' : '') + money(s.diferencia)}</span></div>`).join('') : '<div class="row muted">Sin cierres recientes</div>'}</div>
+  <div class="card"><h2>Más vendidos</h2>${top.length ? top.map(p => `<div class="row"><span>${esc(p.n)} <span class="m">× ${r2(p.c)}</span></span><b>${money(p.t)}</b></div>`).join('') : '<div class="row muted">Sin ventas</div>'}</div>
+  <div class="card"><h2>Para reponer <span class="tag ${low.length ? 'r' : 'g'}">${low.length}</span></h2>${low.slice(0, 25).map(p => `<div class="row"><span>${esc(p.nombre)}</span><span class="m">quedan ${r2(p.stock)}</span></div>`).join('') || '<div class="row muted">Nada por debajo del mínimo</div>'}${low.length > 25 ? `<div class="row m">y ${low.length - 25} más…</div>` : ''}</div>
+  <div class="center"><button class="btn" onclick="salir()">Cerrar sesión</button></div>`;
+}
+async function refresh(force){
+  if (force) cache.slowT = 0;
+  try { draw(await load()); }
+  catch (e) { if (!SES) return viewLogin(e.message); $('#sub').innerHTML = '<span style="color:#ffb4b4">⚠️ ' + esc(e.message || 'Sin conexión') + '</span>'; }
+}
+window.setP = p => { period = p; $('#app').insertAdjacentHTML('afterbegin', ''); refresh(); };
+window.refresh = refresh;
+window.salir = () => { SES = null; LS.set('panel_ses', null); clearInterval(timer); viewLogin(); };
+function start(){ $('#app').innerHTML = '<div class="center">Cargando…</div>'; refresh(true); clearInterval(timer); timer = setInterval(() => { if (!document.hidden) refresh(); }, 60000); }
+document.addEventListener('visibilitychange', () => { if (!document.hidden && SES) refresh(); });
+SES ? start() : viewLogin();
+</script>
+</body>
+</html>
